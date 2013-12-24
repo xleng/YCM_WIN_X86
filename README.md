@@ -1,4 +1,4 @@
-YouCompleteMe: a code-completion engine for Vim
+YouCompleteMe: a code-completion engine for Vim [version: cf62110]
 ===============================================
 
 [![Build Status](https://travis-ci.org/Valloric/YouCompleteMe.png?branch=travis)](https://travis-ci.org/Valloric/YouCompleteMe)
