@@ -1,4 +1,4 @@
-﻿// Copyright (c) AlphaSierraPapa for the SharpDevelop Team
+// Copyright (c) AlphaSierraPapa for the SharpDevelop Team
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this
 // software and associated documentation files (the "Software"), to deal in the Software
@@ -25,25 +25,10 @@ using System.Xml.Linq;
 using ICSharpCode.NRefactory.CSharp;
 using ICSharpCode.NRefactory.TypeSystem;
 using ICSharpCode.NRefactory.Utils;
+using Mono.Cecil;
 
 namespace OmniSharp.Solution
 {
-    public interface IProject
-    {
-        IProjectContent ProjectContent { get; set; }
-        string Title { get; }
-        string FileName { get; }
-        List<CSharpFile> Files { get; }
-        List<IAssemblyReference> References { get; set; }
-        CSharpFile GetFile(string fileName);
-        CSharpParser CreateParser();
-        XDocument AsXml();
-        void Save(XDocument project);
-        Guid ProjectId { get; }
-        void AddReference(IAssemblyReference reference);
-        void AddReference(string reference);
-    }
-
     public class CSharpProject : IProject
     {
         public static readonly string[] AssemblySearchPaths = {
@@ -55,11 +40,31 @@ namespace OmniSharp.Solution
             @"C:\Program Files\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.0",
             @"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.5",
             @"C:\Windows\Microsoft.NET\Framework\v2.0.50727",
+            @"C:\Program Files (x86)\Microsoft ASP.NET\ASP.NET Web Pages\v2.0\Assemblies",
+            @"C:\Program Files (x86)\Microsoft ASP.NET\ASP.NET Web Pages\v1.0\Assemblies",
+            @"C:\Program Files (x86)\Microsoft ASP.NET\ASP.NET MVC 4\Assemblies",
+            @"C:\Program Files (x86)\Microsoft ASP.NET\ASP.NET MVC 3\Assemblies",
+            @"C:\Program Files\Microsoft ASP.NET\ASP.NET Web Pages\v2.0\Assemblies",
+            @"C:\Program Files\Microsoft ASP.NET\ASP.NET Web Pages\v1.0\Assemblies",
+            @"C:\Program Files\Microsoft ASP.NET\ASP.NET MVC 4\Assemblies",
+            @"C:\Program Files\Microsoft ASP.NET\ASP.NET MVC 3\Assemblies",
+            @"C:\Program Files (x86)\Microsoft Visual Studio 11.0\Common7\IDE\ReferenceAssemblies\v4.5",
+            @"C:\Program Files (x86)\Microsoft Visual Studio 11.0\Common7\IDE\ReferenceAssemblies\v4.0",
+            @"C:\Program Files (x86)\Microsoft Visual Studio 11.0\Common7\IDE\ReferenceAssemblies\v2.0",
+            @"C:\Program Files (x86)\Microsoft Visual Studio 10.0\Common7\IDE\ReferenceAssemblies\v2.0",
+            @"C:\Program Files (x86)\Microsoft Visual Studio 9.0\Common7\IDE\PublicAssemblies",
+            @"C:\Program Files\Microsoft Visual Studio 11.0\Common7\IDE\ReferenceAssemblies\v4.5",
+            @"C:\Program Files\Microsoft Visual Studio 11.0\Common7\IDE\ReferenceAssemblies\v4.0",
+            @"C:\Program Files\Microsoft Visual Studio 11.0\Common7\IDE\ReferenceAssemblies\v2.0",
+            @"C:\Program Files\Microsoft Visual Studio 10.0\Common7\IDE\ReferenceAssemblies\v2.0",
+            @"C:\Program Files\Microsoft Visual Studio 9.0\Common7\IDE\PublicAssemblies",
             
             //Unix Paths
+            @"/usr/local/lib/mono/4.5",
             @"/usr/local/lib/mono/4.0",
             @"/usr/local/lib/mono/3.5",
             @"/usr/local/lib/mono/2.0",
+            @"/usr/lib/mono/4.5",
             @"/usr/lib/mono/4.0",
             @"/usr/lib/mono/3.5",
             @"/usr/lib/mono/2.0",
@@ -71,34 +76,34 @@ namespace OmniSharp.Solution
             @"/Library/Frameworks/Mono.Framework/Libraries/mono/2.0",
         };
 
-        public readonly ISolution Solution;
-        public readonly string AssemblyName;
+        private readonly ISolution _solution;
         public string FileName { get; private set; }
+        public string AssemblyName { get; set; }
         public Guid ProjectId { get; private set; }
 
         public string Title { get; private set; }
         public IProjectContent ProjectContent { get; set; }
         public List<CSharpFile> Files { get; private set; }
 
-        private CompilerSettings _compilerSettings;
+        private readonly CompilerSettings _compilerSettings;
 
         public CSharpProject(ISolution solution, string title, string fileName, Guid id)
         {
-            Solution = solution;
+            _solution = solution;
             Title = title;
-            FileName = fileName;
+			FileName = fileName.ForceNativePathSeparator();
             ProjectId = id;
             Files = new List<CSharpFile>();
 
             var p = new Microsoft.Build.Evaluation.Project(FileName);
             AssemblyName = p.GetPropertyValue("AssemblyName");
 
-            _compilerSettings = new CompilerSettings()
+            _compilerSettings = new CompilerSettings 
                 {
                     AllowUnsafeBlocks = GetBoolProperty(p, "AllowUnsafeBlocks") ?? false,
                     CheckForOverflow = GetBoolProperty(p, "CheckForOverflowUnderflow") ?? false,
                 };
-            string[] defines = p.GetPropertyValue("DefineConstants").Split(new char[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] defines = p.GetPropertyValue("DefineConstants").Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (string define in defines)
                 _compilerSettings.ConditionalSymbols.Add(define);
 
@@ -106,12 +111,19 @@ namespace OmniSharp.Solution
             {
                 try
                 {
-                    string path = Path.Combine(p.DirectoryPath, item.EvaluatedInclude).FixPath();
+                    string path = Path.Combine(p.DirectoryPath, item.EvaluatedInclude).ForceNativePathSeparator();
                     if (File.Exists(path))
+					{
                         Files.Add(new CSharpFile(this, new FileInfo(path).FullName));
+					}
+					else
+					{
+						Console.WriteLine("File does not exist - " + path);
+					}
                 }
-                catch (NullReferenceException)
+                catch (NullReferenceException e)
                 {
+                    Console.WriteLine(e);
                 }
             }
 
@@ -129,13 +141,17 @@ namespace OmniSharp.Solution
                 string assemblyFileName = null;
                 if (item.HasMetadata("HintPath"))
                 {
-                    assemblyFileName = Path.Combine(p.DirectoryPath, item.GetMetadataValue("HintPath")).FixPath();
+                    assemblyFileName = Path.Combine(p.DirectoryPath, item.GetMetadataValue("HintPath")).ForceNativePathSeparator();
                     if (!File.Exists(assemblyFileName))
                         assemblyFileName = null;
                 }
                 //If there isn't a path hint or it doesn't exist, try searching
                 if (assemblyFileName == null)
                     assemblyFileName = FindAssembly(AssemblySearchPaths, item.EvaluatedInclude);
+
+                //If it isn't in the search paths, try the GAC
+                if (assemblyFileName == null)
+                    assemblyFileName = FindAssemblyInNetGac(item.EvaluatedInclude);
 
                 if (assemblyFileName != null)
                 {
@@ -160,10 +176,15 @@ namespace OmniSharp.Solution
                 AddReference(LoadAssembly(FindAssembly(AssemblySearchPaths, "System.Core")));
 
             foreach (var item in p.GetItems("ProjectReference"))
-                AddReference(new ProjectReference(Solution, item.GetMetadataValue("Name")));
+			{
+				var projectName = item.GetMetadataValue("Name");
+				var referenceGuid = Guid.Parse(item.GetMetadataValue("Project"));
+				Console.WriteLine("Adding project reference {0}, {1}",  projectName, referenceGuid);
+                AddReference(new ProjectReference(_solution, projectName, referenceGuid));
+			}
 
             this.ProjectContent = new CSharpProjectContent()
-                .SetAssemblyName(this.AssemblyName)
+                .SetAssemblyName(AssemblyName)
                 .AddAssemblyReferences(References)
                 .AddOrUpdateFiles(Files.Select(f => f.ParsedFile));
             
@@ -206,11 +227,14 @@ namespace OmniSharp.Solution
             return string.Format("[CSharpProject AssemblyName={0}]", AssemblyName);
         }
 
-        #region Static Members
         static ConcurrentDictionary<string, IUnresolvedAssembly> assemblyDict = new ConcurrentDictionary<string, IUnresolvedAssembly>(Platform.FileNameComparer);
 
         public static IUnresolvedAssembly LoadAssembly(string assemblyFileName)
         {
+			if (!File.Exists (assemblyFileName)) 
+			{
+				throw new FileNotFoundException ("Assembly does not exist!", assemblyFileName);
+			}
             return assemblyDict.GetOrAdd(assemblyFileName, file => new CecilLoader().LoadAssemblyFile(file));
         }
 
@@ -218,13 +242,32 @@ namespace OmniSharp.Solution
         {
             if (evaluatedInclude.IndexOf(',') >= 0)
                 evaluatedInclude = evaluatedInclude.Substring(0, evaluatedInclude.IndexOf(','));
+            
+            string directAssemblyFile = (evaluatedInclude + ".dll").ForceNativePathSeparator();
+            if (File.Exists(directAssemblyFile))
+                return directAssemblyFile;
+
             foreach (string searchPath in assemblySearchPaths)
             {
-                string assemblyFile = Path.Combine(searchPath, evaluatedInclude + ".dll").FixPath();
+                string assemblyFile = Path.Combine(searchPath, evaluatedInclude + ".dll").ForceNativePathSeparator();
                 if (File.Exists(assemblyFile))
                     return assemblyFile;
             }
             return null;
+        }
+
+        public static string FindAssemblyInNetGac(string evaluatedInclude)
+        {
+            try
+            {
+                AssemblyNameReference assemblyNameReference = AssemblyNameReference.Parse(evaluatedInclude);
+                return GacInterop.FindAssemblyInNetGac(assemblyNameReference);
+            }
+            catch(TypeInitializationException) 
+            {
+                Console.WriteLine ("Fusion not available - cannot get {0} from the gac.", evaluatedInclude);
+                return null;
+            }
         }
 
 
@@ -237,6 +280,5 @@ namespace OmniSharp.Solution
                 return false;
             return null;
         }
-        #endregion
     }
 }

@@ -7,6 +7,7 @@ requests.exceptions
 This module contains the set of Requests' exceptions.
 
 """
+from .packages.urllib3.exceptions import HTTPError as BaseHTTPError
 
 
 class RequestException(IOError):
@@ -25,6 +26,10 @@ class HTTPError(RequestException):
 
 class ConnectionError(RequestException):
     """A Connection error occurred."""
+
+
+class ProxyError(ConnectionError):
+    """A proxy error occurred."""
 
 
 class SSLError(ConnectionError):
@@ -57,3 +62,7 @@ class InvalidURL(RequestException, ValueError):
 
 class ChunkedEncodingError(RequestException):
     """The server declared chunked encoding but sent an invalid chunk."""
+
+
+class ContentDecodingError(RequestException, BaseHTTPError):
+    """Failed to decode response content"""

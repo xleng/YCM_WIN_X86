@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2013  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2013  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -144,6 +144,13 @@ def LoadExtraConfFile():
   LOGGER.info( 'Received extra conf load request' )
   request_data = request.json
   extra_conf_store.Load( request_data[ 'filepath' ], force = True )
+
+
+@app.post( '/ignore_extra_conf_file' )
+def IgnoreExtraConfFile():
+  LOGGER.info( 'Received extra conf ignore request' )
+  request_data = request.json
+  extra_conf_store.Disable( request_data[ 'filepath' ] )
 
 
 @app.post( '/debug_info' )

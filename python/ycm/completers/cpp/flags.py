@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2011, 2012  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2011, 2012  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -22,13 +22,10 @@ import os
 import inspect
 from ycm import extra_conf_store
 from ycm.utils import ToUtf8IfNeeded
+from ycm.server.responses import NoExtraConfDetected
 
-NO_EXTRA_CONF_FILENAME_MESSAGE = ( 'No {0} file detected, so no compile flags '
-  'are available. Thus no semantic support for C/C++/ObjC/ObjC++. Go READ THE '
-  'DOCS *NOW*, DON\'T file a bug report.' ).format(
-    extra_conf_store.YCM_EXTRA_CONF_FILENAME )
-
-INCLUDE_FLAGS = [ '-isystem', '-I', '-iquote', '--sysroot=' ]
+INCLUDE_FLAGS = [ '-isystem', '-I', '-iquote', '--sysroot=', '-isysroot',
+                  '-include' ]
 
 class Flags( object ):
   """Keeps track of the flags necessary to compile a file.
@@ -53,7 +50,7 @@ class Flags( object ):
       if not module:
         if not self.no_extra_conf_file_warning_posted:
           self.no_extra_conf_file_warning_posted = True
-          raise RuntimeError( NO_EXTRA_CONF_FILENAME_MESSAGE )
+          raise NoExtraConfDetected
         return None
 
       results = _CallExtraConfFlagsForFile( module,
@@ -106,6 +103,7 @@ class Flags( object ):
 
 
 def _CallExtraConfFlagsForFile( module, filename, client_data ):
+  filename = ToUtf8IfNeeded( filename )
   # For the sake of backwards compatibility, we need to first check whether the
   # FlagsForFile function in the extra conf module even allows keyword args.
   if inspect.getargspec( module.FlagsForFile ).keywords:
@@ -203,6 +201,6 @@ def _RemoveUnusedFlags( flags, filename ):
 def _SpecialClangIncludes():
   libclang_dir = os.path.dirname( ycm_core.__file__ )
   path_to_includes = os.path.join( libclang_dir, 'clang_includes' )
-  return [ '-I', path_to_includes ]
+  return [ '-isystem', path_to_includes ]
 
 

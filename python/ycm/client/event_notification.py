@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2013  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2013  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -58,30 +58,12 @@ class EventNotification( BaseRequest ):
       except UnknownExtraConf as e:
           if vimsupport.Confirm( str( e ) ):
             _LoadExtraConfFile( e.extra_conf_file )
+          else:
+            _IgnoreExtraConfFile( e.extra_conf_file )
     except Exception as e:
       vimsupport.PostVimMessage( str( e ) )
 
-    if not self._cached_response:
-      return []
-
-    self._cached_response = [ _ConvertDiagnosticDataToVimData( x )
-                              for x in self._cached_response ]
-    return self._cached_response
-
-
-def _ConvertDiagnosticDataToVimData( diagnostic ):
-  # see :h getqflist for a description of the dictionary fields
-  # Note that, as usual, Vim is completely inconsistent about whether
-  # line/column numbers are 1 or 0 based in its various APIs. Here, it wants
-  # them to be 1-based.
-  return {
-    'bufnr' : vimsupport.GetBufferNumberForFilename( diagnostic[ 'filepath' ]),
-    'lnum'  : diagnostic[ 'line_num' ] + 1,
-    'col'   : diagnostic[ 'column_num' ] + 1,
-    'text'  : diagnostic[ 'text' ],
-    'type'  : diagnostic[ 'kind' ],
-    'valid' : 1
-  }
+    return self._cached_response if self._cached_response else []
 
 
 def SendEventNotificationAsync( event_name, extra_data = None ):
@@ -91,3 +73,7 @@ def SendEventNotificationAsync( event_name, extra_data = None ):
 def _LoadExtraConfFile( filepath ):
   BaseRequest.PostDataToHandler( { 'filepath': filepath },
                                  'load_extra_conf_file' )
+
+def _IgnoreExtraConfFile( filepath ):
+  BaseRequest.PostDataToHandler( { 'filepath': filepath },
+                                 'ignore_extra_conf_file' )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2011, 2012  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2011, 2012  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -25,6 +25,7 @@ import functools
 import socket
 import stat
 from distutils.spawn import find_executable
+import subprocess
 
 WIN_PYTHON27_PATH = 'C:\python27\pythonw.exe'
 WIN_PYTHON26_PATH = 'C:\python26\pythonw.exe'
@@ -38,10 +39,12 @@ def SanitizeQuery( query ):
   return query.strip()
 
 
-def ToUtf8IfNeeded( string_or_unicode ):
-  if isinstance( string_or_unicode, unicode ):
-    return string_or_unicode.encode( 'utf8' )
-  return string_or_unicode
+def ToUtf8IfNeeded( value ):
+  if isinstance( value, unicode ):
+    return value.encode( 'utf8' )
+  if isinstance( value, str ):
+    return value
+  return str( value )
 
 
 def PathToTempDir():
@@ -77,6 +80,13 @@ def GetUnusedLocalhostPort():
   port = sock.getsockname()[ 1 ]
   sock.close()
   return port
+
+
+def RemoveIfExists( filename ):
+  try:
+    os.remove( filename )
+  except OSError:
+    pass
 
 
 def Memoize( obj ):
@@ -162,3 +172,14 @@ def AddThirdPartyFoldersToSysPath():
 def ForceSemanticCompletion( request_data ):
   return ( 'force_semantic' in request_data and
            bool( request_data[ 'force_semantic' ] ) )
+
+
+# A wrapper for subprocess.Popen that works around a Popen bug on Windows.
+def SafePopen( *args, **kwargs ):
+  if kwargs.get( 'stdin' ) is None:
+    # We need this on Windows otherwise bad things happen. See issue #637.
+    kwargs[ 'stdin' ] = subprocess.PIPE if OnWindows() else None
+
+  return subprocess.Popen( *args, **kwargs )
+
+

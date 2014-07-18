@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # Copyright (C) 2011, 2012  Chiel ten Brinke <ctenbrinke@gmail.com>
-#                           Strahinja Val Markovic <val@markovic.io>
+#                           Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -19,7 +19,6 @@
 # along with YouCompleteMe.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
-from sys import platform
 import glob
 from ycm.completers.completer import Completer
 from ycm.server import responses
@@ -28,7 +27,6 @@ import urllib2
 import urllib
 import urlparse
 import json
-import subprocess
 import logging
 
 SERVER_NOT_FOUND_MSG = ( 'OmniSharp server binary not found at {0}. ' +
@@ -41,6 +39,18 @@ class CsharpCompleter( Completer ):
   A Completer that uses the Omnisharp server as completion engine.
   """
 
+  subcommands = {
+    'StartServer': (lambda self, request_data: self._StartServer( request_data )),
+    'StopServer': (lambda self, request_data: self._StopServer()),
+    'RestartServer': (lambda self, request_data: self._RestartServer( request_data )),
+    'ReloadSolution': (lambda self, request_data: self._ReloadSolution()),
+    'ServerRunning': (lambda self, request_data: self._ServerIsRunning()),
+    'ServerReady': (lambda self, request_data: self._ServerIsReady()),
+    'GoToDefinition': (lambda self, request_data: self._GoToDefinition( request_data )),
+    'GoToDeclaration': (lambda self, request_data: self._GoToDefinition( request_data )),
+    'GoToDefinitionElseDeclaration': (lambda self, request_data: self._GoToDefinition( request_data ))
+  }
+
   def __init__( self, user_options ):
     super( CsharpCompleter, self ).__init__( user_options )
     self._omnisharp_port = None
@@ -48,7 +58,7 @@ class CsharpCompleter( Completer ):
 
 
   def Shutdown( self ):
-    if ( self.user_options[ 'auto_start_csharp_server' ] and
+    if ( self.user_options[ 'auto_stop_csharp_server' ] and
          self._ServerIsRunning() ):
       self._StopServer()
 
@@ -67,13 +77,7 @@ class CsharpCompleter( Completer ):
 
 
   def DefinedSubcommands( self ):
-    return [ 'StartServer',
-             'StopServer',
-             'RestartServer',
-             'ServerRunning',
-             'GoToDefinition',
-             'GoToDeclaration',
-             'GoToDefinitionElseDeclaration' ]
+    return CsharpCompleter.subcommands.keys()
 
 
   def OnFileReadyToParse( self, request_data ):
@@ -87,21 +91,11 @@ class CsharpCompleter( Completer ):
       raise ValueError( self.UserCommandsHelpMessage() )
 
     command = arguments[ 0 ]
-    if command == 'StartServer':
-      return self._StartServer( request_data )
-    elif command == 'StopServer':
-      return self._StopServer()
-    elif command == 'RestartServer':
-      if self._ServerIsRunning():
-        self._StopServer()
-      return self._StartServer( request_data )
-    elif command == 'ServerRunning':
-      return self._ServerIsRunning()
-    elif command in [ 'GoToDefinition',
-                      'GoToDeclaration',
-                      'GoToDefinitionElseDeclaration' ]:
-      return self._GoToDefinition( request_data )
-    raise ValueError( self.UserCommandsHelpMessage() )
+    if command in CsharpCompleter.subcommands:
+      command_lamba = CsharpCompleter.subcommands[ command ]
+      return command_lamba( self, request_data )
+    else:
+      raise ValueError( self.UserCommandsHelpMessage() )
 
 
   def DebugInfo( self ):
@@ -117,17 +111,31 @@ class CsharpCompleter( Completer ):
     self._logger.info( 'startup' )
 
     self._omnisharp_port = utils.GetUnusedLocalhostPort()
-    solutionfiles, folder = _FindSolutionFiles( request_data[ 'filepath' ] )
+    solution_files, folder = _FindSolutionFiles( request_data[ 'filepath' ] )
 
-    if len( solutionfiles ) == 0:
+    if len( solution_files ) == 0:
       raise RuntimeError(
         'Error starting OmniSharp server: no solutionfile found' )
-    elif len( solutionfiles ) == 1:
-      solutionfile = solutionfiles[ 0 ]
+    elif len( solution_files ) == 1:
+      solutionfile = solution_files[ 0 ]
     else:
-      raise RuntimeError(
-        'Found multiple solution files instead of one!\n{0}'.format(
-          solutionfiles ) )
+      # multiple solutions found : if there is one whose name is the same
+      # as the folder containing the file we edit, use this one
+      # (e.g. if we have bla/Project.sln and we are editing
+      # bla/Project/Folder/File.cs, use bla/Project.sln)
+      filepath_components = _PathComponents( request_data[ 'filepath' ] )
+      solutionpath = _PathComponents( folder )
+      foldername = ''
+      if len( filepath_components ) > len( solutionpath ):
+          foldername = filepath_components[ len( solutionpath ) ]
+      solution_file_candidates = [ sfile for sfile in solution_files
+        if _GetFilenameWithoutExtension( sfile ) == foldername ]
+      if len( solution_file_candidates ) == 1:
+        solutionfile = solution_file_candidates[ 0 ]
+      else:
+        raise RuntimeError(
+          'Found multiple solution files instead of one!\n{0}'.format(
+            solution_files ) )
 
     omnisharp = os.path.join(
       os.path.abspath( os.path.dirname( __file__ ) ),
@@ -136,13 +144,14 @@ class CsharpCompleter( Completer ):
     if not os.path.isfile( omnisharp ):
       raise RuntimeError( SERVER_NOT_FOUND_MSG.format( omnisharp ) )
 
-    if not platform.startswith( 'win' ):
-      omnisharp = 'mono ' + omnisharp
-
     path_to_solutionfile = os.path.join( folder, solutionfile )
-    # command has to be provided as one string for some reason
-    command = [ omnisharp + ' -p ' + str( self._omnisharp_port ) + ' -s ' +
-                path_to_solutionfile ]
+    # we need to pass the command to Popen as a string since we're passing
+    # shell=True (as recommended by Python's doc)
+    command = ( omnisharp + ' -p ' + str( self._omnisharp_port ) + ' -s ' +
+                path_to_solutionfile )
+
+    if not utils.OnWindows():
+      command = 'mono ' + command
 
     filename_format = os.path.join( utils.PathToTempDir(),
                                    'omnisharp_{port}_{sln}_{std}.log' )
@@ -154,7 +163,9 @@ class CsharpCompleter( Completer ):
 
     with open( self._filename_stderr, 'w' ) as fstderr:
       with open( self._filename_stdout, 'w' ) as fstdout:
-        subprocess.Popen( command, stdout=fstdout, stderr=fstderr, shell=True )
+        # shell=True is needed for Windows so OmniSharp does not spawn
+        # in a new visible window
+        utils.SafePopen( command, stdout=fstdout, stderr=fstderr, shell=True )
 
     self._logger.info( 'Starting OmniSharp server' )
 
@@ -164,6 +175,19 @@ class CsharpCompleter( Completer ):
     self._GetResponse( '/stopserver' )
     self._omnisharp_port = None
     self._logger.info( 'Stopping OmniSharp server' )
+
+
+  def _RestartServer ( self, request_data ):
+    """ Restarts the OmniSharp server """
+    if self._ServerIsRunning():
+      self._StopServer()
+    return self._StartServer( request_data )
+
+
+  def _ReloadSolution( self ):
+    """ Reloads the solutions in the OmniSharp server """
+    self._logger.info( 'Reloading Solution in OmniSharp server' )
+    return self._GetResponse( '/reloadsolution' )
 
 
   def _GetCompletions( self, request_data ):
@@ -206,6 +230,15 @@ class CsharpCompleter( Completer ):
       return False
 
 
+  def _ServerIsReady( self ):
+    """ Check if our OmniSharp server is ready """
+    try:
+      return bool( self._omnisharp_port and
+                  self._GetResponse( '/checkreadystatus', silent = True ) )
+    except:
+      return False
+
+
   def _ServerLocation( self ):
     return 'http://localhost:' + str( self._omnisharp_port )
 
@@ -230,3 +263,20 @@ def _FindSolutionFiles( filepath ):
       break
     solutionfiles = glob.glob1( folder, '*.sln' )
   return solutionfiles, folder
+
+def _PathComponents( path ):
+  path_components = []
+  while True:
+    path, folder = os.path.split( path )
+    if folder:
+      path_components.append( folder )
+    else:
+      if path:
+        path_components.append( path )
+      break
+  path_components.reverse()
+  return path_components
+
+def _GetFilenameWithoutExtension( path ):
+    return os.path.splitext( os.path.basename ( path ) )[ 0 ]
+

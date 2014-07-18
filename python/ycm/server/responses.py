@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2013  Strahinja Val Markovic <val@markovic.io>
+# Copyright (C) 2013  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -19,8 +19,18 @@
 
 import os
 
+YCM_EXTRA_CONF_FILENAME = '.ycm_extra_conf.py'
+
 CONFIRM_CONF_FILE_MESSAGE = ('Found {0}. Load? \n\n(Question can be turned '
                              'off with options, see YCM docs)')
+
+NO_EXTRA_CONF_FILENAME_MESSAGE = ( 'No {0} file detected, so no compile flags '
+  'are available. Thus no semantic support for C/C++/ObjC/ObjC++. Go READ THE '
+  'DOCS *NOW*, DON\'T file a bug report.' ).format( YCM_EXTRA_CONF_FILENAME )
+
+NO_DIAGNOSTIC_SUPPORT_MESSAGE = ( 'YCM has no diagnostics support for this '
+  'filetype; refer to Syntastic docs if using Syntastic.')
+
 
 class ServerError( Exception ):
   def __init__( self, message ):
@@ -33,6 +43,16 @@ class UnknownExtraConf( ServerError ):
     super( UnknownExtraConf, self ).__init__( message )
     self.extra_conf_file = extra_conf_file
 
+
+class NoExtraConfDetected( ServerError ):
+  def __init__( self ):
+    super( NoExtraConfDetected, self ).__init__(
+      NO_EXTRA_CONF_FILENAME_MESSAGE )
+
+
+class NoDiagnosticSupport( ServerError ):
+  def __init__( self ):
+    super( NoDiagnosticSupport, self ).__init__( NO_DIAGNOSTIC_SUPPORT_MESSAGE )
 
 
 def BuildGoToResponse( filepath, line_num, column_num, description = None ):
@@ -81,17 +101,26 @@ def BuildCompletionData( insertion_text,
   return completion_data
 
 
-def BuildDiagnosticData( filepath,
-                         line_num,
-                         column_num,
-                         text,
-                         kind ):
+def BuildDiagnosticData( diagnostic ):
+  def BuildRangeData( source_range ):
+    return {
+      'start': BuildLocationData( source_range.start_ ),
+      'end': BuildLocationData( source_range.end_ ),
+    }
+
+  def BuildLocationData( location ):
+    return {
+      'line_num': location.line_number_ - 1,
+      'column_num': location.column_number_ - 1,
+      'filepath': location.filename_,
+    }
+
   return {
-    'filepath': filepath,
-    'line_num': line_num,
-    'column_num': column_num,
-    'text': text,
-    'kind': kind
+    'ranges': [ BuildRangeData( x ) for x in diagnostic.ranges_ ],
+    'location': BuildLocationData( diagnostic.location_ ),
+    'location_extent': BuildRangeData( diagnostic.location_extent_ ),
+    'text': diagnostic.text_,
+    'kind': diagnostic.kind_
   }
 
 

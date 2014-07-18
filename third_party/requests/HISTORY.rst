@@ -3,6 +3,67 @@
 Release History
 ---------------
 
+2.2.1 (2014-01-23)
+++++++++++++++++++
+
+**Bugfixes**
+
+- Fixes incorrect parsing of proxy credentials that contain a literal or encoded '#' character.
+- Assorted urllib3 fixes.
+
+2.2.0 (2014-01-09)
+++++++++++++++++++
+
+**API Changes**
+
+- New exception: ``ContentDecodingError``. Raised instead of ``urllib3``
+  ``DecodeError`` exceptions.
+
+**Bugfixes**
+
+- Avoid many many exceptions from the buggy implementation of ``proxy_bypass`` on OS X in Python 2.6.
+- Avoid crashing when attempting to get authentication credentials from ~/.netrc when running as a user without a home directory.
+- Use the correct pool size for pools of connections to proxies.
+- Fix iteration of ``CookieJar`` objects.
+- Ensure that cookies are persisted over redirect.
+- Switch back to using chardet, since it has merged with charade.
+
+2.1.0 (2013-12-05)
+++++++++++++++++++
+
+- Updated CA Bundle, of course.
+- Cookies set on individual Requests through a ``Session`` (e.g. via ``Session.get()``) are no longer persisted to the ``Session``.
+- Clean up connections when we hit problems during chunked upload, rather than leaking them.
+- Return connections to the pool when a chunked upload is successful, rather than leaking it.
+- Match the HTTPbis recommendation for HTTP 301 redirects.
+- Prevent hanging when using streaming uploads and Digest Auth when a 401 is received.
+- Values of headers set by Requests are now always the native string type.
+- Fix previously broken SNI support.
+- Fix accessing HTTP proxies using proxy authentication.
+- Unencode HTTP Basic usernames and passwords extracted from URLs.
+- Support for IP address ranges for no_proxy environment variable
+- Parse headers correctly when users override the default ``Host:`` header.
+- Avoid munging the URL in case of case-sensitive servers.
+- Looser URL handling for non-HTTP/HTTPS urls.
+- Accept unicode methods in Python 2.6 and 2.7.
+- More resilient cookie handling.
+- Make ``Response`` objects pickleable.
+- Actually added MD5-sess to Digest Auth instead of pretending to like last time.
+- Updated internal urllib3.
+- Fixed @Lukasa's lack of taste.
+
+2.0.1 (2013-10-24)
+++++++++++++++++++
+
+- Updated included CA Bundle with new mistrusts and automated process for the future
+- Added MD5-sess to Digest Auth
+- Accept per-file headers in multipart file POST messages.
+- Fixed: Don't send the full URL on CONNECT messages.
+- Fixed: Correctly lowercase a redirect scheme.
+- Fixed: Cookies not persisted when set via functional API.
+- Fixed: Translate urllib3 ProxyError into a requests ProxyError derived from ConnectionError.
+- Updated internal urllib3 and chardet.
+
 2.0.0 (2013-09-24)
 ++++++++++++++++++
 

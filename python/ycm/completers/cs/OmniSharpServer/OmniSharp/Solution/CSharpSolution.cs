@@ -28,6 +28,7 @@ namespace OmniSharp.Solution
 {
     public interface ISolution
     {
+        bool Loaded { get; }
         List<IProject> Projects { get; }
         string FileName { get; }
         CSharpFile GetFile(string filename);
@@ -47,15 +48,13 @@ namespace OmniSharp.Solution
 
         public bool Terminated { get; set; }
 
-        public CSharpSolution(string fileName)
-        {
-            new Action<string>(LoadSolution).BeginInvoke(fileName, null, null);
-        }
+        public bool Loaded { get; private set; }
 
-        private void LoadSolution(string fileName)
+        public void LoadSolution(string fileName)
         {
+            Loaded = false;
             FileName = fileName;
-            _orphanProject = new OrphanProject(this);
+            _orphanProject = new OrphanProject();
             Projects = new List<IProject>();
             Directory = Path.GetDirectoryName(fileName);
             var projectLinePattern =
@@ -69,7 +68,7 @@ namespace OmniSharp.Solution
                 {
                     string typeGuid = match.Groups["TypeGuid"].Value;
                     string title = match.Groups["Title"].Value;
-                    string location = Path.Combine(Directory, match.Groups["Location"].Value).FixPath();
+                    string location = Path.Combine(Directory, match.Groups["Location"].Value).LowerCaseDriveLetter();
                     string guid = match.Groups["Guid"].Value;
                     switch (typeGuid.ToUpperInvariant())
                     {
@@ -93,11 +92,12 @@ namespace OmniSharp.Solution
                     }
                 }
             }
+            Loaded = true;
         }
 
         public void LoadProject(string title, string location, string id)
         {
-            Console.WriteLine("Loading project - " + title);
+            Console.WriteLine("Loading project - {0}, {1}, {2}", title, location, id);
             Projects.Add(new CSharpProject(this, title, location, new Guid(id)));
         }
 
@@ -115,21 +115,27 @@ namespace OmniSharp.Solution
             if (project == null)
             {
                 var file = new FileInfo(filename);
-                var directory = file.Directory;
-                var projectFiles = directory.GetFiles("*.csproj");
-                while (!projectFiles.Any() && directory.Parent != null)
+                if (File.Exists(filename))
                 {
-                    directory = directory.Parent;
-                    projectFiles = directory.GetFiles("*.csproj");
-                }
+                    var directory = file.Directory;
 
-                if (projectFiles.Any())
-                {
-                    if (File.Exists(filename))
+                    while(project==null && directory!=null)
                     {
-                        var projectFile = projectFiles.First();
-                        project = Projects.First(p => projectFile.FullName.Contains(p.FileName));
-                        project.Files.Add(new CSharpFile(project, filename));
+                        var projectFiles = directory.GetFiles("*.csproj");
+                        directory = directory.Parent;
+
+                        if (projectFiles.Any())
+                        {
+                            foreach(var projectFile in projectFiles)
+                            {
+                                project = Projects.FirstOrDefault(p => projectFile.FullName.Contains(p.FileName));
+                                if(project!=null)
+                                {
+                                    project.Files.Add(new CSharpFile(project, filename));
+                                    break;
+                                }
+                           }
+                        }
                     }
                 }
             }

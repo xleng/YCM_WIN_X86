@@ -136,3 +136,14 @@ Patches and Suggestions
 - Jon Parise
 - Alexander Karpinsky @homm86
 - Marc Schlaich @schlamar
+- Park Ilsu <daftonshady@gmail.com> @daftshady
+- Matt Spitz @mattspitz
+- Vikram Oberoi @voberoi
+- Can Ibanoglu <can.ibanoglu@gmail.com> @canibanoglu
+- Thomas Weißschuh <thomas@t-8ch.de> @t-8ch
+- Jayson Vantuyl <jayson@aggressive.ly> @kagato
+- Pengfei.X <pengphy@gmail.com>
+- Kamil Madac <kamil.madac@gmail.com>
+- Michael Becker <mike@beckerfuffle.com> @beckerfuffle
+- Erik Wickstrom <erik@erikwickstrom.com> @erikwickstrom
+- Константин Подшумок @podshumok

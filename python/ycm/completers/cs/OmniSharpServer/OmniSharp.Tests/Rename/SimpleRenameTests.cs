@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 using NUnit.Framework;
 using OmniSharp.Parser;
 using OmniSharp.Rename;
@@ -234,6 +234,29 @@ public class Handler
         req.Col = 1;
     }
 }");
+        }
+
+        [Test]
+        public void Should_rename_variable_multiple_times_within_line()
+        {
+            Rename(@"
+            public class MultipleTimes
+            {
+                public void SomeMethod()
+                {
+                    float test;
+                    test = te$st * 10;
+                }
+            }", "testing")
+            .ShouldEqual(@"
+            public class MultipleTimes
+            {
+                public void SomeMethod()
+                {
+                    float testing;
+                    testing = testing * 10;
+                }
+            }");
         }
     }
 }

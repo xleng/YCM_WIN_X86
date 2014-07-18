@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2013  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2013  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -23,11 +23,12 @@ import time
 import httplib
 from .test_utils import ( Setup, BuildRequest, PathToTestFile,
                           ChangeSpecificOptions )
-from webtest import TestApp
+from webtest import TestApp, AppError
 from nose.tools import eq_, with_setup
 from hamcrest import ( assert_that, has_item, has_items, has_entry,
-                       contains_inanyorder )
-from ..responses import BuildCompletionData, UnknownExtraConf
+                       contains_inanyorder, empty )
+from ..responses import ( BuildCompletionData, UnknownExtraConf,
+                          NoExtraConfDetected )
 from .. import handlers
 import bottle
 
@@ -72,7 +73,7 @@ def GetCompletions_CsCompleter_Works_test():
   while True:
     result = app.post_json( '/run_completer_command',
                             BuildRequest( completer_target = 'filetype_default',
-                                          command_arguments = ['ServerRunning'],
+                                          command_arguments = ['ServerReady'],
                                           filetype = 'cs' ) ).json
     if result:
       break
@@ -95,6 +96,116 @@ def GetCompletions_CsCompleter_Works_test():
                                command_arguments = ['StopServer'],
                                filetype = 'cs' ) )
 
+@with_setup( Setup )
+def GetCompletions_CsCompleter_ReloadSolutionWorks_test():
+  app = TestApp( handlers.app )
+  filepath = PathToTestFile( 'testy/Program.cs' )
+  contents = open( filepath ).read()
+  event_data = BuildRequest( filepath = filepath,
+                             filetype = 'cs',
+                             contents = contents,
+                             event_name = 'FileReadyToParse' )
+
+  app.post_json( '/event_notification', event_data )
+
+  # We need to wait until the server has started up.
+  while True:
+    result = app.post_json( '/run_completer_command',
+                            BuildRequest( completer_target = 'filetype_default',
+                                          command_arguments = ['ServerReady'],
+                                          filetype = 'cs' ) ).json
+    if result:
+      break
+    time.sleep( 0.2 )
+
+
+  result = app.post_json( '/run_completer_command',
+                          BuildRequest( completer_target = 'filetype_default',
+                                        command_arguments = ['ReloadSolution'],
+                                        filetype = 'cs' ) ).json
+
+  eq_(result, True)
+
+  # We need to turn off the CS server so that it doesn't stick around
+  app.post_json( '/run_completer_command',
+                 BuildRequest( completer_target = 'filetype_default',
+                               command_arguments = ['StopServer'],
+                               filetype = 'cs' ) )
+
+@with_setup( Setup )
+def GetCompletions_CsCompleter_StartsWithUnambiguousMultipleSolutions_test():
+  app = TestApp( handlers.app )
+  filepath = PathToTestFile( ('testy-multiple-solutions/'
+                              'solution-named-like-folder/'
+                              'testy/Program.cs') )
+  contents = open( filepath ).read()
+  event_data = BuildRequest( filepath = filepath,
+                             filetype = 'cs',
+                             contents = contents,
+                             event_name = 'FileReadyToParse' )
+
+  # Here the server will raise an exception if it can't start
+  app.post_json( '/event_notification', event_data )
+
+  # Now for some cleanup: wait for the server to start then shut it down
+  while True:
+    result = app.post_json( '/run_completer_command',
+                            BuildRequest( completer_target = 'filetype_default',
+                                          command_arguments = ['ServerRunning'],
+                                          filetype = 'cs' ) ).json
+    if result:
+      break
+    time.sleep( 0.2 )
+
+  # We need to turn off the CS server so that it doesn't stick around
+  app.post_json( '/run_completer_command',
+                 BuildRequest( completer_target = 'filetype_default',
+                               command_arguments = ['StopServer'],
+                               filetype = 'cs' ) )
+
+@with_setup( Setup )
+def GetCompletions_CsCompleter_DoesntStartWithAmbiguousMultipleSolutions_test():
+  app = TestApp( handlers.app )
+  filepath = PathToTestFile( ('testy-multiple-solutions/'
+                              'solution-not-named-like-folder/'
+                              'testy/Program.cs') )
+  contents = open( filepath ).read()
+  event_data = BuildRequest( filepath = filepath,
+                             filetype = 'cs',
+                             contents = contents,
+                             event_name = 'FileReadyToParse' )
+
+  exception_caught = False
+  try:
+    app.post_json( '/event_notification', event_data )
+  except AppError as e:
+    if 'Found multiple solution files' in str(e):
+      exception_caught = True
+
+  # the test passes if we caught an exception when trying to start it,
+  # so raise one if it managed to start
+  if not exception_caught:
+    # Now for some cleanup: wait for the server to start then shut it down
+    while True:
+      result = app.post_json( '/run_completer_command',
+                              BuildRequest( completer_target = 'filetype_default',
+                                            command_arguments = ['ServerRunning'],
+                                            filetype = 'cs' ) ).json
+      if result:
+        break
+      time.sleep( 0.2 )
+
+    # We need to turn off the CS server so that it doesn't stick around
+    app.post_json( '/run_completer_command',
+                   BuildRequest( completer_target = 'filetype_default',
+                                 command_arguments = ['StopServer'],
+                                 filetype = 'cs' ) )
+
+    raise Exception( ('The Omnisharp server started, despite us not being able '
+                      'to find a suitable solution file to feed it. Did you '
+                      'fiddle with the solution finding code in '
+                      'cs_completer.py? Hopefully you\'ve enhanced it: you need'
+                      'to update this test then :)') )
 
 @with_setup( Setup )
 def GetCompletions_ClangCompleter_WorksWithExplicitFlags_test():
@@ -127,6 +238,36 @@ int main()
                                    CompletionEntryMatcher( 'x' ),
                                    CompletionEntryMatcher( 'y' ) ) )
 
+@with_setup( Setup )
+def GetCompletions_ClangCompleter_NoCompletionsWhenAutoTriggerOff_test():
+  ChangeSpecificOptions( { 'auto_trigger': False } )
+  app = TestApp( handlers.app )
+  contents = """
+struct Foo {
+  int x;
+  int y;
+  char c;
+};
+
+int main()
+{
+  Foo foo;
+  foo.
+}
+"""
+
+  # 0-based line and column!
+  completion_data = BuildRequest( filepath = '/foo.cpp',
+                                  filetype = 'cpp',
+                                  contents = contents,
+                                  line_num = 10,
+                                  column_num = 6,
+                                  start_column = 6,
+                                  compilation_flags = ['-x', 'c++'] )
+
+  results = app.post_json( '/completions', completion_data ).json
+  assert_that( results, empty() )
+
 
 @with_setup( Setup )
 def GetCompletions_ClangCompleter_UnknownExtraConfException_test():
@@ -135,6 +276,9 @@ def GetCompletions_ClangCompleter_UnknownExtraConfException_test():
   completion_data = BuildRequest( filepath = filepath,
                                   filetype = 'cpp',
                                   contents = open( filepath ).read(),
+                                  line_num = 10,
+                                  column_num = 6,
+                                  start_column = 6,
                                   force_semantic = True )
 
   response = app.post_json( '/completions',
@@ -145,6 +289,18 @@ def GetCompletions_ClangCompleter_UnknownExtraConfException_test():
   assert_that( response.json,
                has_entry( 'exception',
                           has_entry( 'TYPE', UnknownExtraConf.__name__ ) ) )
+
+  app.post_json( '/ignore_extra_conf_file',
+                 { 'filepath': PathToTestFile( '.ycm_extra_conf.py' ) } )
+
+  response = app.post_json( '/completions',
+                            completion_data,
+                            expect_errors = True )
+
+  eq_( response.status_code, httplib.INTERNAL_SERVER_ERROR )
+  assert_that( response.json,
+               has_entry( 'exception',
+                          has_entry( 'TYPE', NoExtraConfDetected.__name__ ) ) )
 
 
 @with_setup( Setup )

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2011, 2012, 2013  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2011, 2012, 2013  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -95,7 +95,7 @@ class OmniCompleter( Completer ):
         raise TypeError( OMNIFUNC_NOT_LIST )
 
       return filter( bool, items )
-    except ( TypeError, ValueError ) as error:
+    except ( TypeError, ValueError, vim.error ) as error:
       vimsupport.PostVimMessage(
         OMNIFUNC_RETURNED_BAD_VALUE + ' ' + str( error ) )
       return []

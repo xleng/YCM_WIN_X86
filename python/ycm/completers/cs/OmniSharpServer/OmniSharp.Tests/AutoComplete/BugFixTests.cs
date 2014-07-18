@@ -31,7 +31,7 @@ namespace OmniSharp.Tests.AutoComplete
         int n;
         n.T$;
     }
-}").First().ShouldEqual("string ToString(string format)");
+}").First().ShouldStartWith("string ToString(");
         }
 
         [Test]
@@ -81,6 +81,38 @@ public class MyClass
     }
 }").ShouldContainOnly("int Length");
 
+        }
+
+        [Test]
+        public void Should_not_add_parentheses_to_class_when_not_instantiating()
+        {
+            var completions = CompletionsFor(
+                @"
+                public class MyClass
+                {
+                    public MyClass()
+                    {
+                        System.Diagnostics.Debug$
+                    }
+                }").ToArray();
+
+            completions.ShouldNotContain("Debugger()");                
+            completions.ShouldContain("Debugger");                
+        }
+
+        [Test]
+        public void Should_add_parentheses_to_class_when_instantiating()
+        {
+            
+            CompletionsFor(
+                @"
+                public class MyClass
+                {
+                    public MyClass()
+                    {
+                        var d = new System.Strin$
+                    }
+                }").ShouldContain("String(");
         }
     }
 }

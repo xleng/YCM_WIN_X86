@@ -1,4 +1,4 @@
-" Copyright (C) 2011, 2012  Strahinja Val Markovic  <val@markovic.io>
+" Copyright (C) 2011, 2012  Google Inc.
 "
 " This file is part of YouCompleteMe.
 "
@@ -19,18 +19,26 @@
 let s:save_cpo = &cpo
 set cpo&vim
 
+function! s:restore_cpo()
+  let &cpo = s:save_cpo
+  unlet s:save_cpo
+endfunction
+
 if exists( "g:loaded_youcompleteme" )
+  call s:restore_cpo()
   finish
 elseif v:version < 703 || (v:version == 703 && !has('patch584'))
   echohl WarningMsg |
         \ echomsg "YouCompleteMe unavailable: requires Vim 7.3.584+" |
         \ echohl None
+  call s:restore_cpo()
   finish
 elseif !has( 'python' )
   echohl WarningMsg |
         \ echomsg "YouCompleteMe unavailable: requires Vim compiled with " .
         \ " Python 2.x support" |
         \ echohl None
+  call s:restore_cpo()
   finish
 endif
 
@@ -60,6 +68,7 @@ if g:ycm_check_if_ycm_core_present && !s:HasYcmCore()
         \ "ycm_core.[so|pyd|dll] not detected; you need to compile " .
         \ "YCM before using it. Read the docs!" |
         \ echohl None
+  call s:restore_cpo()
   finish
 endif
 
@@ -71,11 +80,11 @@ let g:loaded_youcompleteme = 1
 " The only defaults that are here are the ones that are only relevant to the YCM
 " Vim client and not the server.
 
-let g:ycm_register_as_syntastic_checker =
-      \ get( g:, 'ycm_register_as_syntastic_checker', 1 )
-
 let g:ycm_allow_changing_updatetime =
       \ get( g:, 'ycm_allow_changing_updatetime', 1 )
+
+let g:ycm_open_loclist_on_ycm_diags =
+      \ get( g:, 'ycm_open_loclist_on_ycm_diags', 1 )
 
 let g:ycm_add_preview_to_completeopt =
       \ get( g:, 'ycm_add_preview_to_completeopt', 0 )
@@ -116,6 +125,33 @@ let g:ycm_extra_conf_vim_data =
 let g:ycm_path_to_python_interpreter =
       \ get( g:, 'ycm_path_to_python_interpreter', '' )
 
+let g:ycm_show_diagnostics_ui =
+      \ get( g:, 'ycm_show_diagnostics_ui',
+      \ get( g:, 'ycm_register_as_syntastic_checker', 1 ) )
+
+let g:ycm_enable_diagnostic_signs =
+      \ get( g:, 'ycm_enable_diagnostic_signs',
+      \ get( g:, 'syntastic_enable_signs', 1 ) )
+
+let g:ycm_enable_diagnostic_highlighting =
+      \ get( g:, 'ycm_enable_diagnostic_highlighting',
+      \ get( g:, 'syntastic_enable_highlighting', 1 ) )
+
+let g:ycm_echo_current_diagnostic =
+      \ get( g:, 'ycm_echo_current_diagnostic',
+      \ get( g:, 'syntastic_echo_current_error', 1 ) )
+
+let g:ycm_always_populate_location_list =
+      \ get( g:, 'ycm_always_populate_location_list',
+      \ get( g:, 'syntastic_always_populate_loc_list', 0 ) )
+
+let g:ycm_error_symbol =
+      \ get( g:, 'ycm_error_symbol',
+      \ get( g:, 'syntastic_error_symbol', '>>' ) )
+
+let g:ycm_warning_symbol =
+      \ get( g:, 'ycm_warning_symbol',
+      \ get( g:, 'syntastic_warning_symbol', '>>' ) )
 
 " On-demand loading. Let's use the autoload folder and not slow down vim's
 " startup procedure.
@@ -125,5 +161,4 @@ augroup youcompletemeStart
 augroup END
 
 " This is basic vim plugin boilerplate
-let &cpo = s:save_cpo
-unlet s:save_cpo
+call s:restore_cpo()

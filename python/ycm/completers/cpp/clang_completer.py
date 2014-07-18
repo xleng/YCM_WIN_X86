@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2011, 2012  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2011, 2012  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -36,6 +36,7 @@ FILE_TOO_SHORT_MESSAGE = (
     MIN_LINES_IN_FILE_TO_PARSE ) )
 NO_DIAGNOSTIC_MESSAGE = 'No diagnostic for current line!'
 PRAGMA_DIAG_TEXT_TO_IGNORE = '#pragma once in main file'
+TOO_MANY_ERRORS_DIAG_TEXT_TO_IGNORE = 'too many errors emitted, stopping now'
 
 
 class ClangCompleter( Completer ):
@@ -199,7 +200,7 @@ class ClangCompleter( Completer ):
 
     diagnostics = _FilterDiagnostics( diagnostics )
     self._diagnostic_store = DiagnosticsToDiagStructure( diagnostics )
-    return [ ConvertToDiagnosticResponse( x ) for x in
+    return [ responses.BuildDiagnosticData( x ) for x in
              diagnostics[ : self._max_diagnostics_to_display ] ]
 
 
@@ -224,7 +225,7 @@ class ClangCompleter( Completer ):
     distance_to_closest_diagnostic = 999
 
     for diagnostic in diagnostics:
-      distance = abs( current_column - diagnostic.column_number_ )
+      distance = abs( current_column - diagnostic.location_.column_number_ )
       if distance < distance_to_closest_diagnostic:
         distance_to_closest_diagnostic = distance
         closest_diagnostic = diagnostic
@@ -265,8 +266,8 @@ def ConvertCompletionData( completion_data ):
 def DiagnosticsToDiagStructure( diagnostics ):
   structure = defaultdict( lambda : defaultdict( list ) )
   for diagnostic in diagnostics:
-    structure[ diagnostic.filename_ ][ diagnostic.line_number_ ].append(
-        diagnostic )
+    structure[ diagnostic.location_.filename_ ][
+      diagnostic.location_.line_number_ ].append( diagnostic )
   return structure
 
 
@@ -278,13 +279,6 @@ def InCFamilyFile( filetypes ):
   return ClangAvailableForFiletypes( filetypes )
 
 
-def ConvertToDiagnosticResponse( diagnostic ):
-  return responses.BuildDiagnosticData( diagnostic.filename_,
-                                        diagnostic.line_number_ - 1,
-                                        diagnostic.column_number_ - 1,
-                                        diagnostic.text_,
-                                        diagnostic.kind_ )
-
 def _FilterDiagnostics( diagnostics ):
   # Clang has an annoying warning that shows up when we try to compile header
   # files if the header has "#pragma once" inside it. The error is not
@@ -293,6 +287,11 @@ def _FilterDiagnostics( diagnostics ):
   #
   # See our issue #216 and upstream bug:
   #   http://llvm.org/bugs/show_bug.cgi?id=16686
-  return [ x for x in diagnostics if x.text_ != PRAGMA_DIAG_TEXT_TO_IGNORE ]
+  #
+  # The second thing we want to filter out are those incredibly annoying "too
+  # many errors emitted" diagnostics that are utterly useless.
+  return [ x for x in diagnostics if
+           x.text_ != PRAGMA_DIAG_TEXT_TO_IGNORE and
+           x.text_ != TOO_MANY_ERRORS_DIAG_TEXT_TO_IGNORE ]
 
 

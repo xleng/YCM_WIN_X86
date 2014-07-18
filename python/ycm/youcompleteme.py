@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# Copyright (C) 2011, 2012  Strahinja Val Markovic  <val@markovic.io>
+# Copyright (C) 2011, 2012  Google Inc.
 #
 # This file is part of YouCompleteMe.
 #
@@ -19,11 +19,13 @@
 
 import os
 import vim
-import subprocess
 import tempfile
 import json
+import signal
+from subprocess import PIPE
 from ycm import vimsupport
 from ycm import utils
+from ycm.diagnostic_interface import DiagnosticInterface
 from ycm.completers.all.omni_completer import OmniCompleter
 from ycm.completers.general import syntax_parse
 from ycm.completers.completer_utils import FiletypeCompleterExistsForFiletype
@@ -51,6 +53,11 @@ except ImportError:
 #  https://github.com/kennethreitz/requests/issues/879
 os.environ['no_proxy'] = '127.0.0.1,localhost'
 
+# Force the Python interpreter embedded in Vim (in which we are running) to
+# ignore the SIGINT signal. This helps reduce the fallout of a user pressing
+# Ctrl-C in Vim.
+signal.signal( signal.SIGINT, signal.SIG_IGN )
+
 NUM_YCMD_STDERR_LINES_ON_CRASH = 30
 SERVER_CRASH_MESSAGE_STDERR_FILE = (
   'The ycmd server SHUT DOWN (restart with :YcmRestartServer). ' +
@@ -64,6 +71,8 @@ SERVER_IDLE_SUICIDE_SECONDS = 10800  # 3 hours
 class YouCompleteMe( object ):
   def __init__( self, user_options ):
     self._user_options = user_options
+    self._user_notified_about_crash = False
+    self._diag_interface = DiagnosticInterface( user_options )
     self._omnicomp = OmniCompleter( user_options )
     self._latest_completion_request = None
     self._latest_file_parse_request = None
@@ -76,25 +85,22 @@ class YouCompleteMe( object ):
     self._SetupServer()
     self._ycmd_keepalive.Start()
 
-
   def _SetupServer( self ):
     server_port = utils.GetUnusedLocalhostPort()
     with tempfile.NamedTemporaryFile( delete = False ) as options_file:
       self._temp_options_filename = options_file.name
       json.dump( dict( self._user_options ), options_file )
+      options_file.flush()
+
       args = [ utils.PathToPythonInterpreter(),
                _PathToServerScript(),
                '--port={0}'.format( server_port ),
                '--options_file={0}'.format( options_file.name ),
                '--log={0}'.format( self._user_options[ 'server_log_level' ] ),
                '--idle_suicide_seconds={0}'.format(
-                  SERVER_IDLE_SUICIDE_SECONDS ) ]
+                  SERVER_IDLE_SUICIDE_SECONDS )]
 
-      BaseRequest.server_location = 'http://localhost:' + str( server_port )
-
-      if self._user_options[ 'server_use_vim_stdout' ]:
-        self._server_popen = subprocess.Popen( args )
-      else:
+      if not self._user_options[ 'server_use_vim_stdout' ]:
         filename_format = os.path.join( utils.PathToTempDir(),
                                         'server_{port}_{std}.log' )
 
@@ -102,17 +108,17 @@ class YouCompleteMe( object ):
                                                       std = 'stdout' )
         self._server_stderr = filename_format.format( port = server_port,
                                                       std = 'stderr' )
-        # We need this on Windows otherwise bad things happen. See issue #637.
-        stdin = subprocess.PIPE if utils.OnWindows() else None
+        args.append('--stdout={0}'.format( self._server_stdout ))
+        args.append('--stderr={0}'.format( self._server_stderr ))
 
-        with open( self._server_stderr, 'w' ) as fstderr:
-          with open( self._server_stdout, 'w' ) as fstdout:
-            self._server_popen = subprocess.Popen( args,
-                                                   stdin = stdin,
-                                                   stdout = fstdout,
-                                                   stderr = fstderr )
+        if self._user_options[ 'server_keep_logfiles' ]:
+          args.append('--keep_logfiles')
+
+      self._server_popen = utils.SafePopen( args, stdout = PIPE, stderr = PIPE)
+
+      BaseRequest.server_location = 'http://localhost:' + str( server_port )
+
     self._NotifyUserIfServerCrashed()
-
 
   def _IsServerAlive( self ):
     returncode = self._server_popen.poll()
@@ -121,8 +127,9 @@ class YouCompleteMe( object ):
 
 
   def _NotifyUserIfServerCrashed( self ):
-    if self._IsServerAlive():
+    if self._user_notified_about_crash or self._IsServerAlive():
       return
+    self._user_notified_about_crash = True
     if self._server_stderr:
       with open( self._server_stderr, 'r' ) as server_stderr_file:
         error_output = ''.join( server_stderr_file.readlines()[
@@ -139,9 +146,15 @@ class YouCompleteMe( object ):
     return self._server_popen.pid
 
 
+  def _ServerCleanup( self ):
+    if self._IsServerAlive():
+      self._server_popen.terminate()
+    utils.RemoveIfExists( self._temp_options_filename )
+
   def RestartServer( self ):
     vimsupport.PostVimMessage( 'Restarting ycmd server...' )
-    self.OnVimLeave()
+    self._user_notified_about_crash = False
+    self._ServerCleanup()
     self._SetupServer()
 
 
@@ -233,16 +246,12 @@ class YouCompleteMe( object ):
     SendEventNotificationAsync( 'InsertLeave' )
 
 
-  def OnVimLeave( self ):
-    if self._IsServerAlive():
-      self._server_popen.terminate()
-    os.remove( self._temp_options_filename )
+  def OnCursorMoved( self ):
+    self._diag_interface.OnCursorMoved()
 
-    if not self._user_options[ 'server_keep_logfiles' ]:
-      if self._server_stderr:
-        os.remove( self._server_stderr )
-      if self._server_stdout:
-        os.remove( self._server_stdout )
+
+  def OnVimLeave( self ):
+    self._ServerCleanup()
 
 
   def OnCurrentIdentifierFinished( self ):
@@ -256,16 +265,26 @@ class YouCompleteMe( object ):
                  self._latest_file_parse_request.Done() )
 
 
-  def GetDiagnosticsFromStoredRequest( self ):
+  def GetDiagnosticsFromStoredRequest( self, qflist_format = False ):
     if self.DiagnosticsForCurrentFileReady():
-      to_return = self._latest_file_parse_request.Response()
+      diagnostics = self._latest_file_parse_request.Response()
       # We set the diagnostics request to None because we want to prevent
       # Syntastic from repeatedly refreshing the buffer with the same diags.
       # Setting this to None makes DiagnosticsForCurrentFileReady return False
       # until the next request is created.
       self._latest_file_parse_request = None
-      return to_return
+      if qflist_format:
+        return vimsupport.ConvertDiagnosticsToQfList( diagnostics )
+      else:
+        return diagnostics
     return []
+
+
+  def UpdateDiagnosticInterface( self ):
+    if not self.DiagnosticsForCurrentFileReady():
+      return
+    self._diag_interface.UpdateWithNewDiagnostics(
+      self.GetDiagnosticsFromStoredRequest() )
 
 
   def ShowDetailedDiagnostic( self ):
@@ -358,3 +377,5 @@ def _AddUltiSnipsDataIfNeeded( extra_data ):
   extra_data[ 'ultisnips_snippets' ] = [ { 'trigger': x.trigger,
                                            'description': x.description
                                          } for x in rawsnips ]
+
+

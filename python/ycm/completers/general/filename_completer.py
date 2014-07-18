@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # Copyright (C) 2013 Stanislav Golovanov <stgolovanov@gmail.com>
-#                    Strahinja Val Markovic  <val@markovic.io>
+#                    Google Inc.
 #
 # YouCompleteMe is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,11 +18,15 @@
 
 import os
 import re
+from collections import defaultdict
 
 from ycm.completers.completer import Completer
 from ycm.completers.cpp.clang_completer import InCFamilyFile
 from ycm.completers.cpp.flags import Flags
+from ycm.utils import ToUtf8IfNeeded
 from ycm.server import responses
+
+EXTRA_INFO_MAP = { 1 : '[File]', 2 : '[Dir]', 3 : '[File&Dir]' }
 
 class FilenameCompleter( Completer ):
   """
@@ -55,7 +59,7 @@ class FilenameCompleter( Completer ):
   def AtIncludeStatementStart( self, request_data ):
     start_column = request_data[ 'start_column' ]
     current_line = request_data[ 'line_value' ]
-    filepath = request_data[ 'filepath' ]
+    filepath = ToUtf8IfNeeded( request_data[ 'filepath' ] )
     filetypes = request_data[ 'file_data' ][ filepath ][ 'filetypes' ]
     return ( InCFamilyFile( filetypes ) and
              self._include_start_regex.match(
@@ -76,7 +80,7 @@ class FilenameCompleter( Completer ):
   def ComputeCandidatesInner( self, request_data ):
     current_line = request_data[ 'line_value' ]
     start_column = request_data[ 'start_column' ]
-    filepath = request_data[ 'filepath' ]
+    filepath = ToUtf8IfNeeded( request_data[ 'filepath' ] )
     filetypes = request_data[ 'file_data' ][ filepath ][ 'filetypes' ]
     line = current_line[ :start_column ]
 
@@ -136,18 +140,20 @@ def _GetPathsStandardCase( path_dir, use_working_dir, filepath ):
 
 
 def _GenerateCandidatesForPaths( absolute_paths ):
-  seen_basenames = set()
-  completion_dicts = []
-
+  extra_info = defaultdict(int)
+  basenames = []
   for absolute_path in absolute_paths:
     basename = os.path.basename( absolute_path )
-    if basename in seen_basenames:
-      continue
-    seen_basenames.add( basename )
-
+    if extra_info[ basename ] == 0:
+      basenames.append( basename )
     is_dir = os.path.isdir( absolute_path )
+    extra_info[ basename ] |= ( 2 if is_dir else 1 )
+
+  completion_dicts = []
+  # Keep original ordering
+  for basename in basenames:
     completion_dicts.append(
       responses.BuildCompletionData( basename,
-                                     '[Dir]' if is_dir else '[File]' ) )
+                                     EXTRA_INFO_MAP[ extra_info[ basename ] ] ) )
 
   return completion_dicts

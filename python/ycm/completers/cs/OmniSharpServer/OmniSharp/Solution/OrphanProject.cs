@@ -28,9 +28,9 @@ namespace OmniSharp.Solution
             AddReference(CSharpProject.LoadAssembly(reference));
         }
 
-        private CSharpFile _file;
+        private readonly CSharpFile _file;
 
-        public OrphanProject(ISolution solution)
+        public OrphanProject()
         {
             Title = "Orphan Project";
             _file = new CSharpFile(this, "dummy_file", "");
@@ -38,6 +38,8 @@ namespace OmniSharp.Solution
             Files.Add(_file);
 
             ProjectId = Guid.NewGuid();
+
+            References = new List<IAssemblyReference>();
 
             string mscorlib = CSharpProject.FindAssembly(CSharpProject.AssemblySearchPaths, "mscorlib");
             ProjectContent = new CSharpProjectContent()

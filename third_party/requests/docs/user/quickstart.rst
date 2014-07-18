@@ -68,7 +68,7 @@ following code::
 
 You can see that the URL has been correctly encoded by printing the URL::
 
-    >>> print r.url
+    >>> print(r.url)
     http://httpbin.org/get?key2=value2&key1=value1
 
 Note that any dictionary key whose value is ``None`` will not be added to the
@@ -99,7 +99,12 @@ using, and change it, using the ``r.encoding`` property::
     >>> r.encoding = 'ISO-8859-1'
 
 If you change the encoding, Requests will use the new value of ``r.encoding``
-whenever you call ``r.text``.
+whenever you call ``r.text``. You might want to do this in any situation where
+you can apply special logic to work out what the encoding of the content will
+be. For example, HTTP and XML have the ability to specify their encoding in
+their body. In situations like this, you should use ``r.content`` to find the
+encoding, and then set ``r.encoding``. This will let you use ``r.text`` with
+the correct encoding.
 
 Requests will also use custom encodings in the event that you need them. If
 you have created your own encoding and registered it with the ``codecs``
@@ -151,6 +156,18 @@ server, you can access ``r.raw``. If you want to do this, make sure you set
     <requests.packages.urllib3.response.HTTPResponse object at 0x101194810>
     >>> r.raw.read(10)
     '\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03'
+
+In general, however, you should use a pattern like this to save what is being
+streamed to a file::
+
+    with open(filename, 'wb') as fd:
+        for chunk in r.iter_content(chunk_size):
+            fd.write(chunk)
+
+Using ``Response.iter_content`` will handle a lot of what you would otherwise
+have to handle when using ``Response.raw`` directly. When streaming a
+download, the above is the preferred and recommended way to retrieve the
+content.
 
 
 Custom Headers
@@ -339,8 +356,8 @@ parameter::
 Redirection and History
 -----------------------
 
-Requests will automatically perform location redirection while using the GET
-and OPTIONS verbs.
+Requests will automatically perform location redirection for all verbs except
+HEAD.
 
 GitHub redirects all HTTP requests to HTTPS. We can use the ``history`` method
 of the Response object to track redirection. Let's see what GitHub does::
@@ -357,8 +374,8 @@ The :class:`Response.history` list contains the :class:`Request` objects that
 were created in order to complete the request. The list is sorted from the
 oldest to the most recent request.
 
-If you're using GET or OPTIONS, you can disable redirection handling with the
-``allow_redirects`` parameter::
+If you're using GET, OPTIONS, POST, PUT, PATCH or DELETE, you can disable
+redirection handling with the ``allow_redirects`` parameter::
 
     >>> r = requests.get('http://github.com', allow_redirects=False)
     >>> r.status_code
@@ -366,8 +383,7 @@ If you're using GET or OPTIONS, you can disable redirection handling with the
     >>> r.history
     []
 
-If you're using POST, PUT, PATCH, DELETE or HEAD, you can enable
-redirection as well::
+If you're using HEAD, you can enable redirection as well::
 
     >>> r = requests.post('http://github.com', allow_redirects=True)
     >>> r.url
