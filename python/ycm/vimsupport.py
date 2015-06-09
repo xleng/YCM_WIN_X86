@@ -19,8 +19,15 @@
 
 import vim
 import os
+import tempfile
 import json
-from ycm.utils import ToUtf8IfNeeded
+from ycmd.utils import ToUtf8IfNeeded
+from ycmd import user_options_store
+
+BUFFER_COMMAND_MAP = { 'same-buffer'      : 'edit',
+                       'horizontal-split' : 'split',
+                       'vertical-split'   : 'vsplit',
+                       'new-tab'          : 'tabedit' }
 
 def CurrentLineAndColumn():
   """Returns the 0-based current line and 0-based current column."""
@@ -44,9 +51,25 @@ def CurrentColumn():
   return vim.current.window.cursor[ 1 ]
 
 
+def CurrentLineContents():
+  return vim.current.line
+
+
 def TextAfterCursor():
   """Returns the text after CurrentColumn."""
   return vim.current.line[ CurrentColumn(): ]
+
+
+# Expects version_string in 'MAJOR.MINOR.PATCH' format, e.g. '7.4.301'
+def VimVersionAtLeast( version_string ):
+  major, minor, patch = [ int( x ) for x in version_string.split( '.' ) ]
+
+  # For Vim 7.4.301, v:version is '704'
+  actual_major_and_minor = GetIntValue( 'v:version' )
+  if actual_major_and_minor != major * 100 + minor:
+    return False
+
+  return GetBoolValue( 'has("patch{0}")'.format( patch ) )
 
 
 # Note the difference between buffer OPTIONS and VARIABLES; the two are not
@@ -65,10 +88,11 @@ def GetBufferOption( buffer_object, option ):
   return GetVariableValue( to_eval )
 
 
-def GetUnsavedAndCurrentBufferData():
-  def BufferModified( buffer_object ):
-    return bool( int( GetBufferOption( buffer_object, 'mod' ) ) )
+def BufferModified( buffer_object ):
+  return bool( int( GetBufferOption( buffer_object, 'mod' ) ) )
 
+
+def GetUnsavedAndCurrentBufferData():
   buffers_data = {}
   for buffer_object in vim.buffers:
     if not ( BufferModified( buffer_object ) or
@@ -84,8 +108,8 @@ def GetUnsavedAndCurrentBufferData():
 
 
 def GetBufferNumberForFilename( filename, open_file_if_needed = True ):
-  return GetIntValue( "bufnr('{0}', {1})".format(
-      os.path.realpath( filename ),
+  return GetIntValue( u"bufnr('{0}', {1})".format(
+      EscapeForVim( os.path.realpath( filename ) ),
       int( open_file_if_needed ) ) )
 
 
@@ -104,8 +128,13 @@ def GetBufferFilepath( buffer_object ):
   if buffer_object.name:
     return buffer_object.name
   # Buffers that have just been created by a command like :enew don't have any
-  # buffer name so we use the buffer number for that.
-  return os.path.join( os.getcwd(), str( buffer_object.number ) )
+  # buffer name so we use the buffer number for that. Also, os.getcwd() throws
+  # an exception when the CWD has been deleted so we handle that.
+  try:
+    folder_path = os.getcwd()
+  except OSError:
+    folder_path = tempfile.gettempdir()
+  return os.path.join( folder_path, str( buffer_object.number ) )
 
 
 # NOTE: This unplaces *all* signs in a buffer, not just the ones we placed. We
@@ -121,6 +150,11 @@ def UnplaceAllSignsInBuffer( buffer_number ):
 
 
 def PlaceSign( sign_id, line_num, buffer_num, is_error = True ):
+  # libclang can give us diagnostics that point "outside" the file; Vim borks
+  # on these.
+  if line_num < 1:
+    line_num = 1
+
   sign_name = 'YcmError' if is_error else 'YcmWarning'
   vim.command( 'sign place {0} line={1} name={2} buffer={3}'.format(
     sign_id, line_num, sign_name, buffer_num ) )
@@ -154,7 +188,7 @@ def AddDiagnosticSyntaxMatch( line_num,
       "matchadd('{0}', '\%{1}l\%{2}c')".format( group, line_num, column_num ) )
   else:
     return GetIntValue(
-      "matchadd('{0}', '\%{1}l\%{2}c\_.*\%{3}l\%{4}c')".format(
+      "matchadd('{0}', '\%{1}l\%{2}c\_.\\{{-}}\%{3}l\%{4}c')".format(
         group, line_num, column_num, line_end_num, column_end_num ) )
 
 
@@ -187,12 +221,19 @@ def ConvertDiagnosticsToQfList( diagnostics ):
     # line/column numbers are 1 or 0 based in its various APIs. Here, it wants
     # them to be 1-based.
     location = diagnostic[ 'location' ]
+    line_num = location[ 'line_num' ]
+
+    # libclang can give us diagnostics that point "outside" the file; Vim borks
+    # on these.
+    if line_num < 1:
+      line_num = 1
+
     return {
       'bufnr' : GetBufferNumberForFilename( location[ 'filepath' ] ),
-      'lnum'  : location[ 'line_num' ] + 1,
-      'col'   : location[ 'column_num' ] + 1,
+      'lnum'  : line_num,
+      'col'   : location[ 'column_num' ],
       'text'  : ToUtf8IfNeeded( diagnostic[ 'text' ] ),
-      'type'  : diagnostic[ 'kind' ],
+      'type'  : diagnostic[ 'kind' ][ 0 ],
       'valid' : 1
     }
 
@@ -232,6 +273,18 @@ def VimExpressionToPythonType( vim_expression ):
     return result
 
 
+def HiddenEnabled( buffer_object ):
+  return bool( int( GetBufferOption( buffer_object, 'hid' ) ) )
+
+
+def BufferIsUsable( buffer_object ):
+  return not BufferModified( buffer_object ) or HiddenEnabled( buffer_object )
+
+
+def EscapedFilepath( filepath ):
+  return filepath.replace( ' ' , r'\ ' )
+
+
 # Both |line| and |column| need to be 1-based
 def JumpToLocation( filename, line, column ):
   # Add an entry to the jumplist
@@ -244,7 +297,12 @@ def JumpToLocation( filename, line, column ):
     # location, not to the start of the newly opened file.
     # Sadly this fails on random occasions and the undesired jump remains in the
     # jumplist.
-    vim.command( 'keepjumps edit {0}'.format( filename ) )
+    user_command = user_options_store.Value( 'goto_buffer_command' )
+    command = BUFFER_COMMAND_MAP.get( user_command, 'edit' )
+    if command == 'edit' and not BufferIsUsable( vim.current.buffer ):
+      command = 'split'
+    vim.command( 'keepjumps {0} {1}'.format( command,
+                                             EscapedFilepath( filename ) ) )
   vim.current.window.cursor = ( line, column - 1 )
 
   # Center the screen on the jumped-to location

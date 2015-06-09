@@ -36,33 +36,44 @@ elseif v:version < 703 || (v:version == 703 && !has('patch584'))
 elseif !has( 'python' )
   echohl WarningMsg |
         \ echomsg "YouCompleteMe unavailable: requires Vim compiled with " .
-        \ " Python 2.x support" |
+        \ "Python 2.x support" |
         \ echohl None
   call s:restore_cpo()
   finish
 endif
 
 let s:script_folder_path = escape( expand( '<sfile>:p:h' ), '\' )
+let s:python_folder_path = s:script_folder_path . '/../python/'
+let s:ycmd_folder_path = s:script_folder_path . '/../third_party/ycmd/'
 
-function! s:HasYcmCore()
-  let path_prefix = s:script_folder_path . '/../python/'
-  if filereadable(path_prefix . 'ycm_client_support.so') &&
-        \ filereadable(path_prefix . 'ycm_core.so')
+function! s:YcmLibsPresentIn( path_prefix )
+  if filereadable(a:path_prefix . 'ycm_client_support.so') &&
+        \ filereadable(a:path_prefix . 'ycm_core.so')
     return 1
-  elseif filereadable(path_prefix . 'ycm_client_support.pyd') &&
-        \ filereadable(path_prefix . 'ycm_core.pyd')
+  elseif filereadable(a:path_prefix . 'ycm_client_support.pyd') &&
+        \ filereadable(a:path_prefix . 'ycm_core.pyd')
     return 1
-  elseif filereadable(path_prefix . 'ycm_client_support.dll') &&
-        \ filereadable(path_prefix . 'ycm_core.dll')
+  elseif filereadable(a:path_prefix . 'ycm_client_support.dll') &&
+        \ filereadable(a:path_prefix . 'ycm_core.dll')
     return 1
   endif
   return 0
 endfunction
 
+if s:YcmLibsPresentIn( s:python_folder_path )
+  echohl WarningMsg |
+        \ echomsg "YCM libraries found in old YouCompleteMe/python location; " .
+        \ "please RECOMPILE YCM." |
+        \ echohl None
+  call s:restore_cpo()
+  finish
+endif
+
 let g:ycm_check_if_ycm_core_present =
       \ get( g:, 'ycm_check_if_ycm_core_present', 1 )
 
-if g:ycm_check_if_ycm_core_present && !s:HasYcmCore()
+if g:ycm_check_if_ycm_core_present &&
+      \ !s:YcmLibsPresentIn( s:ycmd_folder_path )
   echohl WarningMsg |
         \ echomsg "ycm_client_support.[so|pyd|dll] and " .
         \ "ycm_core.[so|pyd|dll] not detected; you need to compile " .
@@ -152,6 +163,9 @@ let g:ycm_error_symbol =
 let g:ycm_warning_symbol =
       \ get( g:, 'ycm_warning_symbol',
       \ get( g:, 'syntastic_warning_symbol', '>>' ) )
+
+let g:ycm_goto_buffer_command =
+      \ get( g:, 'ycm_goto_buffer_command', 'same-buffer' )
 
 " On-demand loading. Let's use the autoload folder and not slow down vim's
 " startup procedure.

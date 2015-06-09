@@ -22,13 +22,15 @@ import vim
 import tempfile
 import json
 import signal
+import base64
 from subprocess import PIPE
 from ycm import vimsupport
-from ycm import utils
+from ycmd import utils
+from ycmd.request_wrap import RequestWrap
 from ycm.diagnostic_interface import DiagnosticInterface
-from ycm.completers.all.omni_completer import OmniCompleter
-from ycm.completers.general import syntax_parse
-from ycm.completers.completer_utils import FiletypeCompleterExistsForFiletype
+from ycm.omni_completer import OmniCompleter
+from ycm import syntax_parse
+from ycmd.completers.completer_utils import FiletypeCompleterExistsForFiletype
 from ycm.client.ycmd_keepalive import YcmdKeepalive
 from ycm.client.base_request import BaseRequest, BuildRequestData
 from ycm.client.command_request import SendCommandRequest
@@ -36,7 +38,7 @@ from ycm.client.completion_request import CompletionRequest
 from ycm.client.omni_completion_request import OmniCompletionRequest
 from ycm.client.event_notification import ( SendEventNotificationAsync,
                                             EventNotification )
-from ycm.server.responses import ServerError
+from ycmd.responses import ServerError
 
 try:
   from UltiSnips import UltiSnips_Manager
@@ -58,7 +60,12 @@ os.environ['no_proxy'] = '127.0.0.1,localhost'
 # Ctrl-C in Vim.
 signal.signal( signal.SIGINT, signal.SIG_IGN )
 
+HMAC_SECRET_LENGTH = 16
 NUM_YCMD_STDERR_LINES_ON_CRASH = 30
+SERVER_CRASH_MESSAGE_STDERR_FILE_DELETED = (
+  'The ycmd server SHUT DOWN (restart with :YcmRestartServer). '
+  'Logfile was deleted; set g:ycm_server_keep_logfiles to see errors '
+  'in the future.' )
 SERVER_CRASH_MESSAGE_STDERR_FILE = (
   'The ycmd server SHUT DOWN (restart with :YcmRestartServer). ' +
   'Stderr (last {0} lines):\n\n'.format( NUM_YCMD_STDERR_LINES_ON_CRASH ) )
@@ -74,22 +81,24 @@ class YouCompleteMe( object ):
     self._user_notified_about_crash = False
     self._diag_interface = DiagnosticInterface( user_options )
     self._omnicomp = OmniCompleter( user_options )
-    self._latest_completion_request = None
     self._latest_file_parse_request = None
+    self._latest_completion_request = None
     self._server_stdout = None
     self._server_stderr = None
     self._server_popen = None
     self._filetypes_with_keywords_loaded = set()
-    self._temp_options_filename = None
     self._ycmd_keepalive = YcmdKeepalive()
     self._SetupServer()
     self._ycmd_keepalive.Start()
 
   def _SetupServer( self ):
     server_port = utils.GetUnusedLocalhostPort()
+    # The temp options file is deleted by ycmd during startup
     with tempfile.NamedTemporaryFile( delete = False ) as options_file:
-      self._temp_options_filename = options_file.name
-      json.dump( dict( self._user_options ), options_file )
+      hmac_secret = os.urandom( HMAC_SECRET_LENGTH )
+      options_dict = dict( self._user_options )
+      options_dict[ 'hmac_secret' ] = base64.b64encode( hmac_secret )
+      json.dump( options_dict, options_file )
       options_file.flush()
 
       args = [ utils.PathToPythonInterpreter(),
@@ -115,27 +124,30 @@ class YouCompleteMe( object ):
           args.append('--keep_logfiles')
 
       self._server_popen = utils.SafePopen( args, stdout = PIPE, stderr = PIPE)
-
-      BaseRequest.server_location = 'http://localhost:' + str( server_port )
+      BaseRequest.server_location = 'http://127.0.0.1:' + str( server_port )
+      BaseRequest.hmac_secret = hmac_secret
 
     self._NotifyUserIfServerCrashed()
 
-  def _IsServerAlive( self ):
+  def IsServerAlive( self ):
     returncode = self._server_popen.poll()
     # When the process hasn't finished yet, poll() returns None.
     return returncode is None
 
 
   def _NotifyUserIfServerCrashed( self ):
-    if self._user_notified_about_crash or self._IsServerAlive():
+    if self._user_notified_about_crash or self.IsServerAlive():
       return
     self._user_notified_about_crash = True
     if self._server_stderr:
-      with open( self._server_stderr, 'r' ) as server_stderr_file:
-        error_output = ''.join( server_stderr_file.readlines()[
-            : - NUM_YCMD_STDERR_LINES_ON_CRASH ] )
-        vimsupport.PostMultiLineNotice( SERVER_CRASH_MESSAGE_STDERR_FILE +
-                                        error_output )
+      try:
+        with open( self._server_stderr, 'r' ) as server_stderr_file:
+          error_output = ''.join( server_stderr_file.readlines()[
+              : - NUM_YCMD_STDERR_LINES_ON_CRASH ] )
+          vimsupport.PostMultiLineNotice( SERVER_CRASH_MESSAGE_STDERR_FILE +
+                                          error_output )
+      except IOError:
+        vimsupport.PostVimMessage( SERVER_CRASH_MESSAGE_STDERR_FILE_DELETED )
     else:
         vimsupport.PostVimMessage( SERVER_CRASH_MESSAGE_SAME_STDERR )
 
@@ -147,9 +159,9 @@ class YouCompleteMe( object ):
 
 
   def _ServerCleanup( self ):
-    if self._IsServerAlive():
+    if self.IsServerAlive():
       self._server_popen.terminate()
-    utils.RemoveIfExists( self._temp_options_filename )
+
 
   def RestartServer( self ):
     vimsupport.PostVimMessage( 'Restarting ycmd server...' )
@@ -159,34 +171,34 @@ class YouCompleteMe( object ):
 
 
   def CreateCompletionRequest( self, force_semantic = False ):
-    # We have to store a reference to the newly created CompletionRequest
-    # because VimScript can't store a reference to a Python object across
-    # function calls... Thus we need to keep this request somewhere.
+    request_data = BuildRequestData()
     if ( not self.NativeFiletypeCompletionAvailable() and
-         self.CurrentFiletypeCompletionEnabled() and
-         self._omnicomp.ShouldUseNow() ):
-      self._latest_completion_request = OmniCompletionRequest( self._omnicomp )
-    else:
-      extra_data = {}
-      self._AddExtraConfDataIfNeeded( extra_data )
-      if force_semantic:
-        extra_data[ 'force_semantic' ] = True
+         self.CurrentFiletypeCompletionEnabled() ):
+      wrapped_request_data = RequestWrap( request_data )
+      if self._omnicomp.ShouldUseNow( wrapped_request_data ):
+        self._latest_completion_request = OmniCompletionRequest(
+            self._omnicomp, wrapped_request_data )
+        return self._latest_completion_request
 
-      self._latest_completion_request = ( CompletionRequest( extra_data )
-                                          if self._IsServerAlive() else
-                                          None )
+    self._AddExtraConfDataIfNeeded( request_data )
+    if force_semantic:
+      request_data[ 'force_semantic' ] = True
+    self._latest_completion_request = CompletionRequest( request_data )
     return self._latest_completion_request
 
 
   def SendCommandRequest( self, arguments, completer ):
-    if self._IsServerAlive():
+    if self.IsServerAlive():
       return SendCommandRequest( arguments, completer )
 
 
   def GetDefinedSubcommands( self ):
-    if self._IsServerAlive():
-      return BaseRequest.PostDataToHandler( BuildRequestData(),
-                                            'defined_subcommands' )
+    if self.IsServerAlive():
+      try:
+        return BaseRequest.PostDataToHandler( BuildRequestData(),
+                                             'defined_subcommands' )
+      except ServerError:
+        return []
     else:
       return []
 
@@ -212,7 +224,7 @@ class YouCompleteMe( object ):
   def OnFileReadyToParse( self ):
     self._omnicomp.OnFileReadyToParse( None )
 
-    if not self._IsServerAlive():
+    if not self.IsServerAlive():
       self._NotifyUserIfServerCrashed()
 
     extra_data = {}
@@ -226,14 +238,14 @@ class YouCompleteMe( object ):
 
 
   def OnBufferUnload( self, deleted_buffer_file ):
-    if not self._IsServerAlive():
+    if not self.IsServerAlive():
       return
     SendEventNotificationAsync( 'BufferUnload',
                                 { 'unloaded_buffer': deleted_buffer_file } )
 
 
   def OnBufferVisit( self ):
-    if not self._IsServerAlive():
+    if not self.IsServerAlive():
       return
     extra_data = {}
     _AddUltiSnipsDataIfNeeded( extra_data )
@@ -241,7 +253,7 @@ class YouCompleteMe( object ):
 
 
   def OnInsertLeave( self ):
-    if not self._IsServerAlive():
+    if not self.IsServerAlive():
       return
     SendEventNotificationAsync( 'InsertLeave' )
 
@@ -255,7 +267,7 @@ class YouCompleteMe( object ):
 
 
   def OnCurrentIdentifierFinished( self ):
-    if not self._IsServerAlive():
+    if not self.IsServerAlive():
       return
     SendEventNotificationAsync( 'CurrentIdentifierFinished' )
 
@@ -269,9 +281,9 @@ class YouCompleteMe( object ):
     if self.DiagnosticsForCurrentFileReady():
       diagnostics = self._latest_file_parse_request.Response()
       # We set the diagnostics request to None because we want to prevent
-      # Syntastic from repeatedly refreshing the buffer with the same diags.
-      # Setting this to None makes DiagnosticsForCurrentFileReady return False
-      # until the next request is created.
+      # repeated refreshing of the buffer with the same diags. Setting this to
+      # None makes DiagnosticsForCurrentFileReady return False until the next
+      # request is created.
       self._latest_file_parse_request = None
       if qflist_format:
         return vimsupport.ConvertDiagnosticsToQfList( diagnostics )
@@ -288,7 +300,7 @@ class YouCompleteMe( object ):
 
 
   def ShowDetailedDiagnostic( self ):
-    if not self._IsServerAlive():
+    if not self.IsServerAlive():
       return
     try:
       debug_info = BaseRequest.PostDataToHandler( BuildRequestData(),
@@ -300,7 +312,7 @@ class YouCompleteMe( object ):
 
 
   def DebugInfo( self ):
-    if self._IsServerAlive():
+    if self.IsServerAlive():
       debug_info = BaseRequest.PostDataToHandler( BuildRequestData(),
                                                   'debug_info' )
     else:
@@ -320,7 +332,10 @@ class YouCompleteMe( object ):
     filetypes = vimsupport.CurrentFiletypes()
     filetype_to_disable = self._user_options[
       'filetype_specific_completion_to_disable' ]
-    return not all([ x in filetype_to_disable for x in filetypes ])
+    if '*' in filetype_to_disable:
+      return False
+    else:
+      return not all([ x in filetype_to_disable for x in filetypes ])
 
 
   def _AddSyntaxDataIfNeeded( self, extra_data ):
@@ -338,7 +353,11 @@ class YouCompleteMe( object ):
   def _AddTagsFilesIfNeeded( self, extra_data ):
     def GetTagFiles():
       tag_files = vim.eval( 'tagfiles()' )
-      current_working_directory = os.getcwd()
+      # getcwd() throws an exception when the CWD has been deleted.
+      try:
+        current_working_directory = os.getcwd()
+      except OSError:
+        return []
       return [ os.path.join( current_working_directory, x ) for x in tag_files ]
 
     if not self._user_options[ 'collect_identifiers_from_tags_files' ]:
@@ -359,7 +378,7 @@ class YouCompleteMe( object ):
 
 def _PathToServerScript():
   dir_of_current_script = os.path.dirname( os.path.abspath( __file__ ) )
-  return os.path.join( dir_of_current_script, 'server/ycmd.py' )
+  return os.path.join( dir_of_current_script, '../../third_party/ycmd/ycmd' )
 
 
 def _AddUltiSnipsDataIfNeeded( extra_data ):

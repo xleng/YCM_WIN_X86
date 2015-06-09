@@ -21,13 +21,12 @@ from ycm.client.completion_request import CompletionRequest
 
 
 class OmniCompletionRequest( CompletionRequest ):
-  def __init__( self, omni_completer ):
-    super( OmniCompletionRequest, self ).__init__()
+  def __init__( self, omni_completer, request_data ):
+    super( OmniCompletionRequest, self ).__init__( request_data )
     self._omni_completer = omni_completer
 
 
-  def Start( self, query ):
-    self.request_data[ 'query' ] = query
+  def Start( self ):
     self._results = self._omni_completer.ComputeCandidates( self.request_data )
 
 

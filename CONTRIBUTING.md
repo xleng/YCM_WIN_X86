@@ -51,9 +51,11 @@ Here are the things you should do when creating an issue:
    let g:ycm_server_log_level = 'debug'
    ```
 
-   Then start gvim/macvim (not console vim) from the console. As you use Vim,
-   you'll see the `ycmd` debug output stream in the console. Attach that to you
-   issue.
+   Then, if possible, start gvim/macvim (not console vim) from the console. 
+   As you use Vim, you'll see the `ycmd` debug output stream in the console. 
+   If you can not use gvim/macvim, run `:YcmDebugInfo` in vim to see what 
+   temporary files (listed under "Server logfiles") the debug output streams 
+   are written to. Attach the debug output stream to your issue.
 3. **Create a test case for your issue**. This is critical. Don't talk about how
    "when I have X in my file" or similar, _create a file with X in it_ and put
    the contents inside code blocks in your issue description. Try to make this
@@ -81,12 +83,16 @@ Creating good pull requests
     _utmost_ importance. Other people will have to maintain your code so don't
     just throw stuff against the wall until things kinda work.
 
-3.  **Write tests for your code**. If you're changing the VimScript code then
+3.  **Split your pull request into several smaller ones if possible.** This
+    makes it easier to review your changes, which means they will be merged
+    faster.
+
+4.  **Write tests for your code**. If you're changing the VimScript code then
     you don't have to since it's hard to test that code. This is also why you
     should strive to implement your change in Python if at all possible (and if
     it makes sense to do so). Python is also _much_ faster than VimScript.
 
-4.  **Explain in detail why your pull request makes sense.** Ask yourself, would
+5.  **Explain in detail why your pull request makes sense.** Ask yourself, would
     this feature be helpful to others? Not just a few people, but a lot of YCM’s
     users? See, good features are useful to many. If your feature is only useful
     to you and _maybe_ a couple of others, then that’s not a good feature.
@@ -103,7 +109,7 @@ Creating good pull requests
     sometimes what you want can be done in a different way if the reason for the
     change is known. _What goal is your change trying to accomplish?_
 
-5.  **Sign the Google [Contributor License Agreement][cla]** (you can sign
+6.  **Sign the Google [Contributor License Agreement][cla]** (you can sign
     online at the bottom of that page). You _must_ sign this form, otherwise we
     cannot merge in your changes. **_Always_ mention in the pull request that
     you've signed it**, even if you signed it for a previous pull request (you
